@@ -24,7 +24,7 @@ if ($uri === '/' || $uri === '/health') {
     exit;
 }
 
-// 2. Вебхук от Cloudflare / почтового обработчика
+// 2. Вебхук от почтового обработчика (Google Apps Script / Cloudflare)
 if ($uri === '/webhook/email' && $method === 'POST') {
     $authHeader = $_SERVER['HTTP_X_SECRET_TOKEN'] ?? '';
     if (!hash_equals($secretKey, $authHeader)) {
@@ -35,7 +35,6 @@ if ($uri === '/webhook/email' && $method === 'POST') {
 
     $payload = json_decode(file_get_contents('php://input'), true) ?? [];
 
-    // Инициализация сервисов и парсеров
     $telegramClient = new TelegramBotClient($botToken);
     $notificationSender = new TelegramNotificationSender($telegramClient);
     $googleParser = new GoogleForwardingParser();
@@ -71,11 +70,17 @@ if ($uri === '/webhook/telegram' && $method === 'POST') {
 
     if ($chatId && str_starts_with($text, '/start')) {
         $botClient = new TelegramBotClient($botToken);
-        $domain = getenv('APP_EMAIL_DOMAIN') ?: 'yourdomain.com';
-        $userEmail = "card_{$chatId}@{$domain}";
+        $userEmail = "vovamakarov7733+{$chatId}@gmail.com";
 
-        $welcome = "👋 Привет!\n\nТвой личный email для получения уведомлений:\n`{$userEmail}`\n\n"
-                 . "Настрой в своей почте пересылку писем от Uzcard на этот адрес.";
+        $welcome = "👋 *Добро пожаловать в Uzcard Notify!*\n\n"
+                 . "Твой персональный email для уведомлений:\n"
+                 . "`{$userEmail}`\n"
+                 . "*(нажми на адрес, чтобы скопировать)*\n\n"
+                 . "📋 *Как подключить уведомления за 1 минуту:*\n\n"
+                 . "1️⃣ Отправь SMS с текстом `Infoset` на номер `4800`\n"
+                 . "2️⃣ В ответном сообщении отправь цифру `2` (E-mail)\n"
+                 . "3️⃣ Вставь и отправь скопированный адрес выше\n\n"
+                 . "⚡ *Всё!* Бот сам поймает ссылку подтверждения от Uzcard, активирует информирование и начнёт присылать чеки.";
 
         $botClient->sendMessage((int)$chatId, $welcome);
     }
@@ -85,6 +90,6 @@ if ($uri === '/webhook/telegram' && $method === 'POST') {
     exit;
 }
 
-// 4. Все остальные маршруты
+// 4. Fallback 404
 http_response_code(404);
 echo 'Not Found';
