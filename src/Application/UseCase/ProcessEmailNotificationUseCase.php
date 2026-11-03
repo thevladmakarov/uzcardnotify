@@ -26,20 +26,20 @@ final readonly class ProcessEmailNotificationUseCase
             throw new InvalidEmailPayloadException("Не удалось определить Telegram ID получателя из адреса: {$to}");
         }
 
-        // 1. Проверка на подтверждение пересылки от Google (если кто-то настраивает через Gmail)
+        // 1. Подтверждение пересылки от Google (если настраивают через Gmail)
         if ($this->googleParser->supports($from, $rawBody)) {
             $data = $this->googleParser->parse($rawBody);
             $this->sendGoogleConfirmationAlert($chatId, $data['confirmUrl'], $data['code']);
             return;
         }
 
-        // 2. Проверка на письмо активации/подтверждения от Uzcard
+        // 2. Письмо со ссылкой подтверждения от Uzcard (сервис 4800)
         if ($this->isUzcardVerificationEmail($from, $rawBody)) {
-            $this->handleUzcardAutoConfirm($chatId, $rawBody);
+            $this->handleUzcardConfirmationAlert($chatId, $rawBody);
             return;
         }
 
-        // 3. Обычная обработка чека транзакции
+        // 3. Обработка обычного чека транзакции
         if (!$this->uzcardParser->supports($from, $rawBody)) {
             throw new InvalidEmailPayloadException('Письмо не опознано как уведомление Uzcard.');
         }
@@ -65,39 +65,44 @@ final readonly class ProcessEmailNotificationUseCase
     {
         $content = mb_strtolower($from . ' ' . $rawBody);
         return (str_contains($content, 'uzcard') || str_contains($content, 'yagona'))
-            && (str_contains($content, 'подтвержд') || str_contains($content, 'tasdiqlash') || str_contains($content, 'confirm'));
+            && (str_contains($content, 'подтвержд') || str_contains($content, 'tasdiqlash') || str_contains($content, 'mail-confirmer'));
     }
 
-    private function handleUzcardAutoConfirm(int $chatId, string $rawBody): void
+    private function handleUzcardConfirmationAlert(int $chatId, string $rawBody): void
     {
-        // Ищем ссылку подтверждения в письме
-        preg_match('/(https?:\/\/[^\s<>"\'\)]+(?:confirm|verify|token|activate)[^\s<>"\'\)]*)/i', $rawBody, $urlMatches);
-        $confirmUrl = $urlMatches[1] ?? null;
+        // Декодируем quoted-printable (убираем =3D, мягкие переносы =\r\n)
+        $cleanBody = quoted_printable_decode($rawBody);
+        $cleanBody = str_replace(["\r\n", "\n", "\r"], ' ', $cleanBody);
 
-        // Если специфичное слово не найдено, берем любую ссылку на uzcard.uz
-        if (!$confirmUrl && preg_match('/(https?:\/\/[a-zA-Z0-9.\-]*uzcard\.uz[^\s<>"\'\)]+)/i', $rawBody, $fallbackMatches)) {
-            $confirmUrl = $fallbackMatches[1];
+        // Ищем прямую ссылку на подтверждение Uzcard (с учетом порта :27007)
+        preg_match('/https?:\/\/[^\s"\'<>]+mail-confirmer\/confirm\/[a-zA-Z0-9]+/i', $cleanBody, $urlMatches);
+        $confirmUrl = $urlMatches[0] ?? null;
+
+        // Если точный путь не найден, ищем любую ссылку на webapi.uzcard.uz
+        if (!$confirmUrl && preg_match('/https?:\/\/webapi\.uzcard\.uz:[0-9]+[^\s"\'<>]+/i', $cleanBody, $fallbackMatches)) {
+            $confirmUrl = $fallbackMatches[0];
         }
 
         if ($confirmUrl) {
-            // Переходим по ссылке в фоне (cURL GET)
-            $ch = curl_init($confirmUrl);
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_TIMEOUT => 5,
-                CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            ]);
-            curl_exec($ch);
-            curl_close($ch);
+            $text = "🔐 *Подтверждение почты в Uzcard*\n\n"
+                  . "Uzcard прислал ссылку для активации уведомлений.\n"
+                  . "⏳ *Ссылка действует 10 минут!*\n\n"
+                  . "Нажми на кнопку ниже, чтобы открыть страницу и подтвердить привязку 👇";
 
-            $msg = "🎉 *Email успешно подтверждён в Uzcard!*\n\n"
-                 . "Информирование активировано. Теперь все уведомления о покупках и списаниях будут мгновенно приходить сюда.";
-            
-            $this->telegramClient->sendMessage($chatId, $msg);
+            $replyMarkup = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => '✅ Подтвердить почту в Uzcard', 'url' => $confirmUrl]
+                    ]
+                ]
+            ];
+
+            $this->telegramClient->sendMessage($chatId, $text, $replyMarkup);
         } else {
-            // Если ссылку вытащить не удалось, отправляем текст письма
-            $this->telegramClient->sendMessage($chatId, "📩 Получено письмо подтверждения от Uzcard, но ссылку не удалось разобрать автоматически.");
+            $this->telegramClient->sendMessage(
+                $chatId,
+                "📩 Получено письмо подтверждения от Uzcard, но не удалось извлечь ссылку. Проверь входящие на почте."
+            );
         }
     }
 
