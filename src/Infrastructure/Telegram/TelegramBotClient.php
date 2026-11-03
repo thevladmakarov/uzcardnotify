@@ -4,37 +4,39 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Telegram;
 
-use RuntimeException;
-
 final readonly class TelegramBotClient
 {
+    private const BASE_URL = 'https://api.telegram.org/bot';
+
     public function __construct(
         private string $token
     ) {}
 
-    public function sendMessage(int $chatId, string $text): void
+    public function sendMessage(int|string $chatId, string $text, ?array $replyMarkup = null): void
     {
+        $url = self::BASE_URL . $this->token . '/sendMessage';
+
         $payload = [
             'chat_id' => $chatId,
             'text' => $text,
             'parse_mode' => 'Markdown',
+            'disable_web_page_preview' => true,
         ];
 
-        $ch = curl_init("https://api.telegram.org/bot{$this->token}/sendMessage");
+        if ($replyMarkup !== null) {
+            $payload['reply_markup'] = $replyMarkup;
+        }
+
+        $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_POST => true,
-            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-            CURLOPT_POSTFIELDS => json_encode($payload, JSON_THROW_ON_ERROR),
+            CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 5,
         ]);
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_exec($ch);
         curl_close($ch);
-
-        if ($httpCode !== 200) {
-            throw new RuntimeException("Telegram API error. HTTP {$httpCode}: {$response}");
-        }
     }
 }
