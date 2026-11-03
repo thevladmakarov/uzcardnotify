@@ -15,16 +15,29 @@ final readonly class TelegramNotificationSender implements NotificationSenderInt
 
     public function sendTransactionAlert(string $recipientIdentifier, TransactionDTO $transaction): void
     {
-        $message = "💳 *Новая транзакция*\n\n"
-            . "💸 *Сумма:* `{$transaction->amount}`\n"
-            . "💰 *Баланс:* `{$transaction->balance}`\n";
+        $lines = [
+            "💳 *Новая транзакция: {$transaction->type}*\n",
+            "💸 *Сумма:* `{$transaction->amount}`",
+            "💰 *Баланс:* `{$transaction->balance}`",
+        ];
 
         if ($transaction->cardNumber) {
-            $message .= "🔢 *Карта:* `{$transaction->cardNumber}`\n";
+            $lines[] = "🔢 *Карта:* `{$transaction->cardNumber}`";
         }
+
+        if ($transaction->timestamp) {
+            $lines[] = "🕒 *Дата и время:* {$transaction->timestamp}";
+        }
+
+        if ($transaction->location) {
+            $lines[] = "📍 *Место:* {$transaction->location}";
+        }
+
         if ($transaction->merchant) {
-            $message .= "📍 *Место:* {$transaction->merchant}\n";
+            $lines[] = "🏢 *Организация:* {$transaction->merchant}";
         }
+
+        $message = implode("\n", $lines);
 
         $this->client->sendMessage((int)$recipientIdentifier, $message);
     }
