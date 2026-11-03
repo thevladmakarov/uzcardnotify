@@ -15,6 +15,16 @@ $secretKey = getenv('WEBHOOK_SECRET_KEY') ?: '';
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'];
 
+// Healthcheck для UptimeRobot и пинга
+$uri = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+
+if ($uri === '/' || $uri === '/health') {
+    http_response_code(200);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'ok', 'service' => 'uzcardnotify']);
+    exit;
+}
+
 // 1. Вебхук от Cloudflare
 if ($uri === '/webhook/email' && $method === 'POST') {
     $authHeader = $_SERVER['HTTP_X_SECRET_TOKEN'] ?? '';
