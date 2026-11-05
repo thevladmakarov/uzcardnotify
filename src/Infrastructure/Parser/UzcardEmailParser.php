@@ -4,68 +4,65 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Parser;
 
-use App\Application\DTO\TransactionDTO;
-use App\Domain\Exception\UnsupportedNotificationException;
+use App\Domain\Entity\Transaction;
 use App\Infrastructure\Contract\EmailParserInterface;
 
 final class UzcardEmailParser implements EmailParserInterface
 {
-    public function supports(string $sender, string $rawBody): bool
+    public function supports(string $from, string $rawBody): bool
     {
-        $content = mb_strtolower($sender . ' ' . $rawBody);
+        $content = mb_strtolower($from . ' ' . $rawBody);
         return str_contains($content, 'uzcard') 
-            || str_contains($content, 'yagona umumrespublika')
-            || str_contains($content, 'quyidagi amaliyot');
+            && (str_contains($content, 'summa:') || str_contains($content, 'balans:'));
     }
 
-    public function parse(string $rawBody): TransactionDTO
+    public function parse(string $rawBody): Transaction
     {
-        // 1. Определение типа операции (Pokupka или Spisanie)
+        $decoded = quoted_printable_decode($rawBody);
+        $clean = strip_tags($decoded);
+        $clean = preg_replace('/[ \t]+/', ' ', $clean) ?? $clean;
+
+        // 1. Извлечение суммы
+        preg_match('/summa:\s*([\d.]+)\s*UZS/i', $clean, $sumMatches);
+        $amount = isset($sumMatches[1]) ? (float)$sumMatches[1] : 0.0;
+
+        // 2. Извлечение баланса
+        preg_match('/balans:\s*([\d.]+)\s*UZS/i', $clean, $balMatches);
+        $balance = isset($balMatches[1]) ? (float)$balMatches[1] : 0.0;
+
+        // 3. Извлечение маски карты
+        preg_match('/karta\s*\*{3}(\d{4})/i', $clean, $cardMatches);
+        $cardMask = isset($cardMatches[1]) ? '***' . $cardMatches[1] : '****';
+
+        // 4. Извлечение даты и времени
+        preg_match('/(\d{2}\.\d{2}\.\d{2}\s+\d{2}:\d{2})/i', $clean, $dateMatches);
+        $dateTime = $dateMatches[1] ?? date('d.m.y H:i');
+
+        // 5. Определение типа операции и мерчанта/деталей
         $type = 'транзакция';
-        if (stripos($rawBody, 'Pokupka:') !== false) {
-            $type = 'покупка';
-        } elseif (preg_match('/Spisanie\s+[cс]\s+karty:/ui', $rawBody)) {
-            $type = 'списание';
+        $details = null;
+
+        if (preg_match('/(Pokupka|E-Com oplata|Perevod na kartu|Popolnenie scheta):\s*([^,\n\r]+)/i', $clean, $opMatches)) {
+            $rawType = strtolower($opMatches[1]);
+            $details = trim($opMatches[2]);
+
+            $type = match ($rawType) {
+                'pokupka' => 'покупка',
+                'e-com oplata' => 'онлайн-оплата',
+                'perevod na kartu' => 'входящий перевод 📥',
+                'popolnenie scheta' => 'пополнение счёта 📥',
+                default => 'транзакция',
+            };
         }
 
-        // 2. Сумма и баланс
-        preg_match('/summa\s*:\s*([0-9\s.,]+(?:UZS|сум)?)/ui', $rawBody, $amountMatches);
-        preg_match('/balans\s*:\s*([0-9\s.,]+(?:UZS|сум)?)/ui', $rawBody, $balanceMatches);
-
-        if (empty($amountMatches[1])) {
-            throw new UnsupportedNotificationException('Не удалось извлечь сумму операции из письма Uzcard.');
-        }
-
-        // 3. Карта и дата/время
-        preg_match('/karta\s*([*0-9]+)/ui', $rawBody, $cardMatches);
-        preg_match('/(\d{2}\.\d{2}\.\d{2}\s+\d{2}:\d{2})/ui', $rawBody, $dateMatches);
-
-        // 4. Извлечение блока деталей: всё между заголовком операции и датой/картой
-        $merchant = null;
-        $location = null;
-
-        if (preg_match('/(?:Pokupka|Spisanie\s+[cс]\s+karty):\s*(.+?)(?=\s*,?\s*\d{2}\.\d{2}\.\d{2}|\s+karta)/ui', $rawBody, $detailsMatch)) {
-            $rawDetails = trim($detailsMatch[1]);
-            $parts = explode(',', $rawDetails);
-
-            // Первое значение — всегда название мерчанта/организации
-            $merchant = trim(array_shift($parts));
-
-            // Всё, что осталось после первой запятой — адрес / локация
-            if (!empty($parts)) {
-                $location = trim(implode(',', $parts));
-                $location = trim($location, ", \t\n\r");
-            }
-        }
-
-        return new TransactionDTO(
-            amount: trim($amountMatches[1]),
-            balance: isset($balanceMatches[1]) ? trim($balanceMatches[1]) : 'Не указан',
+        return new Transaction(
             type: $type,
-            merchant: $merchant,
-            location: $location ?: null,
-            cardNumber: isset($cardMatches[1]) ? trim($cardMatches[1]) : null,
-            timestamp: $dateMatches[1] ?? null
+            amount: $amount,
+            balance: $balance,
+            cardMask: $cardMask,
+            dateTime: $dateTime,
+            currency: 'UZS',
+            merchant: $details
         );
     }
 }
