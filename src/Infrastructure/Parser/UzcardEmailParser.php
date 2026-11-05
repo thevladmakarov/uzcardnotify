@@ -38,21 +38,23 @@ final class UzcardEmailParser implements EmailParserInterface
         preg_match('/(\d{2}\.\d{2}\.\d{2}\s+\d{2}:\d{2})/i', $clean, $dateMatches);
         $dateTime = $dateMatches[1] ?? date('d.m.y H:i');
 
-        // 5. Определение типа операции и мерчанта/деталей
+        // 5. Определение типа операции и мерчанта
         $type = 'транзакция';
-        $details = null;
 
-        if (preg_match('/(Pokupka|E-Com oplata|Perevod na kartu|Popolnenie scheta):\s*([^,\n\r]+)/i', $clean, $opMatches)) {
+        if (preg_match('/(Pokupka|E-Com oplata|Perevod na kartu|Popolnenie scheta|Spisanie c karty):\s*([^,\n\r]+)/i', $clean, $opMatches)) {
             $rawType = strtolower($opMatches[1]);
-            $details = trim($opMatches[2]);
+            $merchant = trim($opMatches[2]);
 
-            $type = match ($rawType) {
-                'pokupka' => 'покупка',
-                'e-com oplata' => 'онлайн-оплата',
+            $typeLabel = match ($rawType) {
+                'pokupka' => 'покупка 🛒',
+                'e-com oplata' => 'онлайн-оплата 🌐',
                 'perevod na kartu' => 'входящий перевод 📥',
                 'popolnenie scheta' => 'пополнение счёта 📥',
+                'spisanie c karty' => 'исходящий перевод / списание 📤',
                 default => 'транзакция',
             };
+
+            $type = $merchant !== '' ? "{$typeLabel} ({$merchant})" : $typeLabel;
         }
 
         return new Transaction(
@@ -61,8 +63,7 @@ final class UzcardEmailParser implements EmailParserInterface
             balance: $balance,
             cardMask: $cardMask,
             dateTime: $dateTime,
-            currency: 'UZS',
-            merchant: $details
+            currency: 'UZS'
         );
     }
 }
