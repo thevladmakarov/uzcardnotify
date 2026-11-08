@@ -13,7 +13,7 @@ final class UzcardEmailParser implements EmailParserInterface
     {
         $content = mb_strtolower($from . ' ' . $rawBody);
         return str_contains($content, 'uzcard') 
-            && (str_contains($content, 'summa:') || str_contains($content, 'balans:'));
+            && (str_contains($content, 'summa:') || str_contains($content, 'balans:') || str_contains($content, 'nedostatochno sredstv'));
     }
 
     public function parse(string $rawBody): TransactionDTO
@@ -21,6 +21,21 @@ final class UzcardEmailParser implements EmailParserInterface
         $decoded = quoted_printable_decode($rawBody);
         $clean = strip_tags($decoded);
         $clean = preg_replace('/[ \t]+/', ' ', $clean) ?? $clean;
+
+        // 0. Обработка отказа операции из за недостатка средств
+        if (str_contains(mb_strtolower($clean), 'nedostatochno sredstv')) {
+            preg_match('/NEDOSTATOCHNO\s+SREDSTV\s+([0-9*]+)\s+(\d{2}\.\d{2}\.\d{2}\s+\d{2}:\d{2})\s+(.*?)\s*([\d.]+)\s*UZS/i', $clean, $failMatches);
+
+            return new TransactionDTO(
+                amount: $failMatches[4] ?? '0.00',
+                balance: '—',
+                type: '❌ Отказ: Недостаточно средств',
+                merchant: trim($failMatches[3] ?? 'POS purchase'),
+                location: null,
+                cardNumber: $failMatches[1] ?? '****',
+                timestamp: $failMatches[2] ?? date('d.m.y H:i')
+            );
+        }
 
         // 1. Извлечение суммы
         preg_match('/summa:\s*([\d.]+)\s*UZS/i', $clean, $sumMatches);
