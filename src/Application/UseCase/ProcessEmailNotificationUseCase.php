@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\UseCase;
 
+use App\Domain\Enum\Locale;
 use App\Domain\Exception\InvalidEmailPayloadException;
 use App\Infrastructure\Contract\EmailParserInterface;
 use App\Infrastructure\Contract\NotificationSenderInterface;
@@ -21,21 +22,23 @@ final readonly class ProcessEmailNotificationUseCase
 
     public function execute(string $to, string $from, string $rawBody): void
     {
-        $chatId = $this->extractChatId($to, $rawBody);
-        if (!$chatId) {
+        $recipient = $this->extractRecipient($to, $rawBody);
+        if ($recipient === null) {
             throw new InvalidEmailPayloadException("Не удалось определить Telegram ID получателя из адреса: {$to}");
         }
+
+        ['chatId' => $chatId, 'locale' => $locale] = $recipient;
 
         // 1. Подтверждение пересылки от Google (если настраивают через Gmail)
         if ($this->googleParser->supports($from, $rawBody)) {
             $data = $this->googleParser->parse($rawBody);
-            $this->sendGoogleConfirmationAlert($chatId, $data['confirmUrl'], $data['code']);
+            $this->sendGoogleConfirmationAlert($chatId, $data['confirmUrl'], $data['code'], $locale);
             return;
         }
 
         // 2. Письмо со ссылкой подтверждения от Uzcard (сервис 4800)
         if ($this->isUzcardVerificationEmail($from, $rawBody)) {
-            $this->handleUzcardConfirmationAlert($chatId, $rawBody);
+            $this->handleUzcardConfirmationAlert($chatId, $rawBody, $locale);
             return;
         }
 
@@ -45,17 +48,29 @@ final readonly class ProcessEmailNotificationUseCase
         }
 
         $transaction = $this->uzcardParser->parse($rawBody);
-        $this->notificationSender->sendTransactionAlert((string)$chatId, $transaction);
+        $this->notificationSender->sendTransactionAlert((string)$chatId, $transaction, $locale);
     }
 
-    private function extractChatId(string $to, string $rawBody): ?int
+    /**
+     * Извлекает chat_id и выбранный язык из адреса (например: card_uz_123456@... или card_123456@...)
+     * @return array{chatId: int, locale: Locale}|null
+     */
+    private function extractRecipient(string $to, string $rawBody): ?array
     {
-        if (preg_match('/(?:card_|[\+])(\d+)/i', $to, $matches)) {
-            return (int)$matches[1];
+        if (preg_match('/(?:card_|\+)(?:(ru|uz|en)_)?(\d+)/i', $to, $matches)) {
+            $langCode = strtolower($matches[1] ?? '');
+            return [
+                'chatId' => (int)$matches[2],
+                'locale' => Locale::tryFrom($langCode) ?? Locale::RU,
+            ];
         }
 
-        if (preg_match('/(?:card_|[\+])(\d+)@/i', $rawBody, $matches)) {
-            return (int)$matches[1];
+        if (preg_match('/(?:card_|\+)(?:(ru|uz|en)_)?(\d+)@/i', $rawBody, $matches)) {
+            $langCode = strtolower($matches[1] ?? '');
+            return [
+                'chatId' => (int)$matches[2],
+                'locale' => Locale::tryFrom($langCode) ?? Locale::RU,
+            ];
         }
 
         return null;
@@ -68,60 +83,93 @@ final readonly class ProcessEmailNotificationUseCase
             && (str_contains($content, 'подтвержд') || str_contains($content, 'tasdiqlash') || str_contains($content, 'mail-confirmer'));
     }
 
-    private function handleUzcardConfirmationAlert(int $chatId, string $rawBody): void
+    private function handleUzcardConfirmationAlert(int $chatId, string $rawBody, Locale $locale): void
     {
-        // Декодируем quoted-printable (убираем =3D, мягкие переносы =\r\n)
         $cleanBody = quoted_printable_decode($rawBody);
         $cleanBody = str_replace(["\r\n", "\n", "\r"], ' ', $cleanBody);
 
-        // Ищем прямую ссылку на подтверждение Uzcard (с учетом порта :27007)
         preg_match('/https?:\/\/[^\s"\'<>]+mail-confirmer\/confirm\/[a-zA-Z0-9]+/i', $cleanBody, $urlMatches);
         $confirmUrl = $urlMatches[0] ?? null;
 
-        // Если точный путь не найден, ищем любую ссылку на webapi.uzcard.uz
         if (!$confirmUrl && preg_match('/https?:\/\/webapi\.uzcard\.uz:[0-9]+[^\s"\'<>]+/i', $cleanBody, $fallbackMatches)) {
             $confirmUrl = $fallbackMatches[0];
         }
 
         if ($confirmUrl) {
-            $text = "🔐 *Подтверждение почты в Uzcard*\n\n"
-                  . "Uzcard прислал ссылку для активации уведомлений.\n"
-                  . "⏳ *Ссылка действует 10 минут!*\n\n"
-                  . "Нажми на кнопку ниже, чтобы открыть страницу и подтвердить привязку 👇";
+            [$text, $btnText] = match ($locale) {
+                Locale::UZ => [
+                    "🔐 *Uzcard pochta tasdiqlash*\n\n"
+                    . "Uzcard xabarnomalarni faollashtirish uchun havola yubordi.\n"
+                    . "⏳ *Havola 10 daqiqa amal qiladi!*\n\n"
+                    . "Tasdiqlash uchun quyidagi tugmani bosing 👇",
+                    '✅ Uzcard pochtani tasdiqlash'
+                ],
+                Locale::EN => [
+                    "🔐 *Uzcard Email Confirmation*\n\n"
+                    . "Uzcard sent a link to activate your notifications.\n"
+                    . "⏳ *The link is valid for 10 minutes!*\n\n"
+                    . "Click the button below to confirm 👇",
+                    '✅ Confirm Uzcard Email'
+                ],
+                Locale::RU => [
+                    "🔐 *Подтверждение почты в Uzcard*\n\n"
+                    . "Uzcard прислал ссылку для активации уведомлений.\n"
+                    . "⏳ *Ссылка действует 10 минут!*\n\n"
+                    . "Нажми на кнопку ниже, чтобы открыть страницу и подтвердить привязку 👇",
+                    '✅ Подтвердить почту в Uzcard'
+                ],
+            };
 
             $replyMarkup = [
                 'inline_keyboard' => [
                     [
-                        ['text' => '✅ Подтвердить почту в Uzcard', 'url' => $confirmUrl]
+                        ['text' => $btnText, 'url' => $confirmUrl]
                     ]
                 ]
             ];
 
             $this->telegramClient->sendMessage($chatId, $text, $replyMarkup);
         } else {
-            $this->telegramClient->sendMessage(
-                $chatId,
-                "📩 Получено письмо подтверждения от Uzcard, но не удалось извлечь ссылку. Проверь входящие на почте."
-            );
+            $fallbackMsg = match ($locale) {
+                Locale::UZ => "📩 Uzcard tasdiqlash xati olindi, lekin havolani ajratib bo'lmadi. Pochtangizni tekshiring.",
+                Locale::EN => "📩 Uzcard confirmation email received, but the link could not be extracted. Please check your inbox.",
+                Locale::RU => "📩 Получено письмо подтверждения от Uzcard, но не удалось извлечь ссылку. Проверь входящие на почте.",
+            };
+
+            $this->telegramClient->sendMessage($chatId, $fallbackMsg);
         }
     }
 
-    private function sendGoogleConfirmationAlert(int $chatId, ?string $confirmUrl, ?string $code): void
+    private function sendGoogleConfirmationAlert(int $chatId, ?string $confirmUrl, ?string $code, Locale $locale): void
     {
-        $text = "🔐 *Подтверждение пересылки Gmail*\n\n"
-              . "Google запросил подтверждение пересылки писем в этот бот.\n\n";
+        $text = match ($locale) {
+            Locale::UZ => "🔐 *Gmail yo'naltirishni tasdiqlash*\n\nGoogle xatlarni ushbu botga yo'naltirishni tasdiqlashni so'radi.\n\n",
+            Locale::EN => "🔐 *Gmail Forwarding Confirmation*\n\nGoogle requested confirmation to forward emails to this bot.\n\n",
+            Locale::RU => "🔐 *Подтверждение пересылки Gmail*\n\nGoogle запросил подтверждение пересылки писем в этот бот.\n\n",
+        };
 
         if ($code) {
-            $text .= "🔢 *Код подтверждения:* `{$code}`\n\n";
+            $codeLabel = match ($locale) {
+                Locale::UZ => 'Tasdiqlash kodi',
+                Locale::EN => 'Confirmation code',
+                Locale::RU => 'Код подтверждения',
+            };
+            $text .= "🔢 *{$codeLabel}:* `{$code}`\n\n";
         }
 
         $replyMarkup = null;
         if ($confirmUrl) {
-            $text .= "Нажми кнопку ниже для активации 👇";
+            [$promptText, $btnText] = match ($locale) {
+                Locale::UZ => ["Faollashtirish uchun quyidagi tugmani bosing 👇", '✅ Yo\'naltirishni tasdiqlash'],
+                Locale::EN => ["Click the button below to activate 👇", '✅ Confirm forwarding'],
+                Locale::RU => ["Нажми кнопку ниже для активации 👇", '✅ Подтвердить пересылку'],
+            };
+
+            $text .= $promptText;
             $replyMarkup = [
                 'inline_keyboard' => [
                     [
-                        ['text' => '✅ Подтвердить пересылку', 'url' => $confirmUrl]
+                        ['text' => $btnText, 'url' => $confirmUrl]
                     ]
                 ]
             ];
