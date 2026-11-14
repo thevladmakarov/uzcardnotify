@@ -12,8 +12,13 @@ final class UzcardEmailParser implements EmailParserInterface
     public function supports(string $from, string $rawBody): bool
     {
         $content = mb_strtolower($from . ' ' . $rawBody);
+
         return str_contains($content, 'uzcard') 
-            && (str_contains($content, 'summa:') || str_contains($content, 'balans:') || str_contains($content, 'nedostatochno sredstv'));
+            && (
+                str_contains($content, 'summa:') 
+                || str_contains($content, 'balans:') 
+                || str_contains($content, 'nedostatochno sredstv')
+            );
     }
 
     public function parse(string $rawBody): TransactionDTO
@@ -22,7 +27,7 @@ final class UzcardEmailParser implements EmailParserInterface
         $clean = strip_tags($decoded);
         $clean = preg_replace('/[ \t]+/', ' ', $clean) ?? $clean;
 
-        // 0. Обработка отказа операции из за недостатка средств
+        // 0. Обработка отказа операции из-за недостатка средств
         if (str_contains(mb_strtolower($clean), 'nedostatochno sredstv')) {
             preg_match('/NEDOSTATOCHNO\s+SREDSTV\s+([0-9*]+)\s+(\d{2}\.\d{2}\.\d{2}\s+\d{2}:\d{2})\s+(.*?)\s*([\d.]+)\s*UZS/i', $clean, $failMatches);
 
@@ -57,11 +62,13 @@ final class UzcardEmailParser implements EmailParserInterface
         $type = 'транзакция';
         $merchant = null;
 
-        if (preg_match('/(Pokupka|E-Com oplata|Perevod na kartu|Popolnenie scheta|Spisanie c karty):\s*([^,\n\r]+)/i', $clean, $opMatches)) {
-            $rawType = strtolower($opMatches[1]);
+        if (preg_match('/(OTMENA Pokupka|Vidacha nalichnykh v bankomate|Pokupka|E-Com oplata|Perevod na kartu|Popolnenie scheta|Spisanie c karty):\s*([^,\n\r]+)/i', $clean, $opMatches)) {
+            $rawType = strtolower(trim($opMatches[1]));
             $merchant = trim($opMatches[2]);
 
             $type = match ($rawType) {
+                'otmena pokupka' => 'отмена покупки 🔄',
+                'vidacha nalichnykh v bankomate' => 'снятие наличных в банкомате 🏧',
                 'pokupka' => 'покупка 🛒',
                 'e-com oplata' => 'онлайн-оплата 🌐',
                 'perevod na kartu' => 'входящий перевод 📥',
