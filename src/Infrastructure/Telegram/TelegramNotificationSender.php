@@ -2,48 +2,47 @@
 
 declare(strict_types=1);
 
-namespace App\Infrastructure\Telegram;
+namespace App\Domain\Enum;
 
-use App\Application\DTO\TransactionDTO;
-use App\Infrastructure\Contract\NotificationSenderInterface;
-
-final readonly class TelegramNotificationSender implements NotificationSenderInterface
+enum Locale: string
 {
-    public function __construct(
-        private TelegramBotClient $client
-    ) {}
+    case RU = 'ru';
+    case UZ = 'uz';
+    case EN = 'en';
 
-    public function sendTransactionAlert(string $recipientIdentifier, TransactionDTO $transaction): void
+    /**
+     * @return array<string, string>
+     */
+    public function labels(): array
     {
-        $lines = [
-            "💳 *Новая транзакция: {$transaction->type}*\n",
-            "💸 *Сумма:* `{$transaction->amount}`",
-            "💰 *Баланс:* `{$transaction->balance}`",
-        ];
-
-        if ($transaction->cardNumber) {
-            $lines[] = "🔢 *Карта:* `{$transaction->cardNumber}`";
-        }
-
-        if ($transaction->timestamp) {
-            $lines[] = "🕒 *Дата и время:* {$transaction->timestamp}";
-        }
-
-        if ($transaction->location) {
-            $lines[] = "📍 *Место:* {$transaction->location}";
-        }
-
-        if ($transaction->merchant) {
-            $lines[] = "🏢 *Организация:* {$transaction->merchant}";
-        }
-
-        $message = implode("\n", $lines);
-
-        $this->client->sendMessage((int)$recipientIdentifier, $message);
-    }
-
-    public function sendTextMessage(string $recipientIdentifier, string $message): void
-    {
-        $this->client->sendMessage((int)$recipientIdentifier, $message);
+        return match ($this) {
+            self::UZ => [
+                'header'   => 'Yangi tranzaksiya',
+                'amount'   => 'Summa',
+                'balance'  => 'Balans',
+                'card'     => 'Karta',
+                'time'     => 'Sana va vaqt',
+                'location' => 'Manzil',
+                'merchant' => 'Tashkilot',
+            ],
+            self::EN => [
+                'header'   => 'New transaction',
+                'amount'   => 'Amount',
+                'balance'  => 'Balance',
+                'card'     => 'Card',
+                'time'     => 'Date & time',
+                'location' => 'Location',
+                'merchant' => 'Merchant',
+            ],
+            self::RU => [
+                'header'   => 'Новая транзакция',
+                'amount'   => 'Сумма',
+                'balance'  => 'Баланс',
+                'card'     => 'Карта',
+                'time'     => 'Дата и время',
+                'location' => 'Место',
+                'merchant' => 'Организация',
+            ],
+        };
     }
 }
