@@ -9,6 +9,7 @@ use App\Domain\Exception\InvalidEmailPayloadException;
 use App\Infrastructure\Contract\EmailParserInterface;
 use App\Infrastructure\Contract\NotificationSenderInterface;
 use App\Infrastructure\Parser\GoogleForwardingParser;
+use App\Infrastructure\Storage\UserLocaleStorage;
 use App\Infrastructure\Telegram\TelegramBotClient;
 
 final readonly class ProcessEmailNotificationUseCase
@@ -17,19 +18,20 @@ final readonly class ProcessEmailNotificationUseCase
         private EmailParserInterface $uzcardParser,
         private GoogleForwardingParser $googleParser,
         private NotificationSenderInterface $notificationSender,
-        private TelegramBotClient $telegramClient
+        private TelegramBotClient $telegramClient,
+        private UserLocaleStorage $localeStorage
     ) {}
 
     public function execute(string $to, string $from, string $rawBody): void
     {
-        $recipient = $this->extractRecipient($to, $rawBody);
-        if ($recipient === null) {
+        $chatId = $this->extractChatId($to, $rawBody);
+        if (!$chatId) {
             throw new InvalidEmailPayloadException("Не удалось определить Telegram ID получателя из адреса: {$to}");
         }
 
-        ['chatId' => $chatId, 'locale' => $locale] = $recipient;
+        $locale = $this->localeStorage->get($chatId);
 
-        // 1. Подтверждение пересылки от Google (если настраивают через Gmail)
+        // 1. Подтверждение пересылки от Google
         if ($this->googleParser->supports($from, $rawBody)) {
             $data = $this->googleParser->parse($rawBody);
             $this->sendGoogleConfirmationAlert($chatId, $data['confirmUrl'], $data['code'], $locale);
@@ -51,26 +53,14 @@ final readonly class ProcessEmailNotificationUseCase
         $this->notificationSender->sendTransactionAlert((string)$chatId, $transaction, $locale);
     }
 
-    /**
-     * Извлекает chat_id и выбранный язык из адреса (например: card_uz_123456@... или card_123456@...)
-     * @return array{chatId: int, locale: Locale}|null
-     */
-    private function extractRecipient(string $to, string $rawBody): ?array
+    private function extractChatId(string $to, string $rawBody): ?int
     {
-        if (preg_match('/(?:card_|\+)(?:(ru|uz|en)_)?(\d+)/i', $to, $matches)) {
-            $langCode = strtolower($matches[1] ?? '');
-            return [
-                'chatId' => (int)$matches[2],
-                'locale' => Locale::tryFrom($langCode) ?? Locale::RU,
-            ];
+        if (preg_match('/(?:card_|\+)(\d+)/i', $to, $matches)) {
+            return (int)$matches[1];
         }
 
-        if (preg_match('/(?:card_|\+)(?:(ru|uz|en)_)?(\d+)@/i', $rawBody, $matches)) {
-            $langCode = strtolower($matches[1] ?? '');
-            return [
-                'chatId' => (int)$matches[2],
-                'locale' => Locale::tryFrom($langCode) ?? Locale::RU,
-            ];
+        if (preg_match('/(?:card_|\+)(\d+)@/i', $rawBody, $matches)) {
+            return (int)$matches[1];
         }
 
         return null;
