@@ -11,32 +11,37 @@ enum Locale: string
     case EN = 'en';
 
     /**
-     * Перевод названий полей чека
      * @return array<string, string>
      */
     public function labels(): array
     {
         return match ($this) {
             self::UZ => [
+                'header'   => 'Yangi tranzaksiya',
                 'amount'   => 'Summa',
                 'balance'  => 'Balans',
-                'merchant' => 'Joy',
                 'card'     => 'Karta',
-                'time'     => 'Vaqt',
+                'time'     => 'Sana va vaqt',
+                'location' => 'Manzil',
+                'merchant' => 'Tashkilot',
             ],
             self::EN => [
+                'header'   => 'New transaction',
                 'amount'   => 'Amount',
                 'balance'  => 'Balance',
-                'merchant' => 'Merchant',
                 'card'     => 'Card',
-                'time'     => 'Time',
+                'time'     => 'Date & time',
+                'location' => 'Location',
+                'merchant' => 'Merchant',
             ],
             self::RU => [
+                'header'   => 'Новая транзакция',
                 'amount'   => 'Сумма',
                 'balance'  => 'Баланс',
-                'merchant' => 'Точка',
                 'card'     => 'Карта',
-                'time'     => 'Время',
+                'time'     => 'Дата и время',
+                'location' => 'Место',
+                'merchant' => 'Организация',
             ],
         };
     }
