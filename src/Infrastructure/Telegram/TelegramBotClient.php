@@ -27,6 +27,24 @@ final readonly class TelegramBotClient
             $payload['reply_markup'] = $replyMarkup;
         }
 
+        $this->post($url, $payload);
+    }
+
+    public function answerCallbackQuery(string $callbackQueryId): void
+    {
+        if ($callbackQueryId === '') {
+            return;
+        }
+
+        $url = self::BASE_URL . $this->token . '/answerCallbackQuery';
+        $this->post($url, ['callback_query_id' => $callbackQueryId]);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function post(string $url, array $payload): void
+    {
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_POST => true,
