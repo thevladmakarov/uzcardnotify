@@ -30,14 +30,39 @@ final readonly class TelegramBotClient
         $this->post($url, $payload);
     }
 
-    public function answerCallbackQuery(string $callbackQueryId): void
+    public function editMessageText(int|string $chatId, int $messageId, string $text, ?array $replyMarkup = null): void
+    {
+        $url = self::BASE_URL . $this->token . '/editMessageText';
+
+        $payload = [
+            'chat_id' => $chatId,
+            'message_id' => $messageId,
+            'text' => $text,
+            'parse_mode' => 'Markdown',
+            'disable_web_page_preview' => true,
+        ];
+
+        if ($replyMarkup !== null) {
+            $payload['reply_markup'] = $replyMarkup;
+        }
+
+        $this->post($url, $payload);
+    }
+
+    public function answerCallbackQuery(string $callbackQueryId, ?string $text = null): void
     {
         if ($callbackQueryId === '') {
             return;
         }
 
         $url = self::BASE_URL . $this->token . '/answerCallbackQuery';
-        $this->post($url, ['callback_query_id' => $callbackQueryId]);
+        $payload = ['callback_query_id' => $callbackQueryId];
+
+        if ($text !== null) {
+            $payload['text'] = $text;
+        }
+
+        $this->post($url, $payload);
     }
 
     /**
